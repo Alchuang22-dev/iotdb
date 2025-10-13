@@ -52,10 +52,78 @@ public class DataPartitionPolicyTable {
   // The number of SeriesSlots allocated to each RegionGroup in dataAllotMap
   private final BalanceTreeMap<TConsensusGroupId, Integer> seriesPartitionSlotCounter;
 
+  private final java.util.concurrent.atomic.AtomicInteger rrCursor =
+      new java.util.concurrent.atomic.AtomicInteger(0);
+
   public DataPartitionPolicyTable() {
     this.dataAllotTableLock = new ReentrantLock();
     this.dataAllotMap = new HashMap<>();
     this.seriesPartitionSlotCounter = new BalanceTreeMap<>();
+  }
+
+  private static int btGetOrDefault(
+      BalanceTreeMap<TConsensusGroupId, Integer> map, TConsensusGroupId key, int defaultValue) {
+    if (map == null) return defaultValue;
+    Integer v = map.get(key);
+    return (v != null) ? v.intValue() : defaultValue;
+  }
+
+  public TConsensusGroupId newFunction() {
+    if (seriesPartitionSlotCounter == null || seriesPartitionSlotCounter.isEmpty()) {
+      return null;
+    }
+
+    java.util.List<TConsensusGroupId> candidates =
+        new java.util.ArrayList<>(seriesPartitionSlotCounter.keySet());
+
+    int cMin = Integer.MAX_VALUE;
+    int cMax = Integer.MIN_VALUE;
+    java.util.Map<TConsensusGroupId, Integer> countMap = new java.util.HashMap<>(candidates.size());
+
+    for (TConsensusGroupId gid : candidates) {
+      int c = btGetOrDefault(seriesPartitionSlotCounter, gid, 0);
+      countMap.put(gid, c);
+      if (c < cMin) cMin = c;
+      if (c > cMax) cMax = c;
+    }
+
+    final int denom = Math.max(1, cMax - cMin);
+    java.util.Map<TConsensusGroupId, Double> loadMap = new java.util.HashMap<>(candidates.size());
+    double minLoad = Double.POSITIVE_INFINITY;
+    for (TConsensusGroupId gid : candidates) {
+      double load = (countMap.get(gid) - cMin) * 1.0 / denom;
+      loadMap.put(gid, load);
+      if (load < minLoad) minLoad = load;
+    }
+
+    final double epsilon = 0.05;
+    final double threshold = minLoad + epsilon;
+
+    java.util.List<TConsensusGroupId> nearMin = new java.util.ArrayList<>();
+    for (TConsensusGroupId gid : candidates) {
+      if (loadMap.get(gid) <= threshold) {
+        nearMin.add(gid);
+      }
+    }
+
+    nearMin.sort(java.util.Comparator.comparingInt(TConsensusGroupId::getId));
+
+    if (!nearMin.isEmpty()) {
+      int idx = Math.floorMod(rrCursor.getAndIncrement(), nearMin.size());
+      return nearMin.get(idx);
+    }
+
+    TConsensusGroupId best = candidates.get(0);
+    double bestLoad = loadMap.get(best);
+    for (int i = 1; i < candidates.size(); i++) {
+      TConsensusGroupId gid = candidates.get(i);
+      double l = loadMap.get(gid);
+      if (l < bestLoad) {
+        bestLoad = l;
+        best = gid;
+      }
+    }
+    return best;
   }
 
   /**
@@ -70,7 +138,8 @@ public class DataPartitionPolicyTable {
       return dataAllotMap.get(seriesPartitionSlot);
     }
 
-    TConsensusGroupId regionGroupId = seriesPartitionSlotCounter.getKeyWithMinValue();
+    TConsensusGroupId regionGroupId = newFunction();
+    ;
     dataAllotMap.put(seriesPartitionSlot, regionGroupId);
     seriesPartitionSlotCounter.put(
         regionGroupId, seriesPartitionSlotCounter.get(regionGroupId) + 1);
