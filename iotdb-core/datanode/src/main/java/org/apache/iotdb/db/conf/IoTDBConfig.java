@@ -3356,6 +3356,9 @@ public class IoTDBConfig {
   public void setReadConsistencyLevel(String readConsistencyLevel) {
     if ("weak".equalsIgnoreCase(readConsistencyLevel)) {
       this.readConsistencyLevel = ReadConsistencyLevel.WEAK;
+    } else if ("follower_head".equalsIgnoreCase(readConsistencyLevel)
+        || "follower-head".equalsIgnoreCase(readConsistencyLevel)) {
+      this.readConsistencyLevel = ReadConsistencyLevel.FOLLOWER_HEAD;
     } else {
       this.readConsistencyLevel = ReadConsistencyLevel.STRONG;
     }

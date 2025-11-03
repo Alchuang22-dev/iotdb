@@ -359,12 +359,14 @@ public class ConfigNodeDescriptor {
 
     String readConsistencyLevel =
         properties.getProperty("read_consistency_level", conf.getReadConsistencyLevel());
-    if (readConsistencyLevel.equals("strong") || readConsistencyLevel.equals("weak")) {
+    if (readConsistencyLevel.equals("strong")
+        || readConsistencyLevel.equals("weak")
+        || readConsistencyLevel.equals("follower_head")) {
       conf.setReadConsistencyLevel(readConsistencyLevel);
     } else {
       throw new IOException(
           String.format(
-              "Unknown read_consistency_level: %s, please set to \"strong\" or \"weak\"",
+              "Unknown read_consistency_level: %s, please set to \"strong\", \"weak\", or \"follower_head\"",
               readConsistencyLevel));
     }
 

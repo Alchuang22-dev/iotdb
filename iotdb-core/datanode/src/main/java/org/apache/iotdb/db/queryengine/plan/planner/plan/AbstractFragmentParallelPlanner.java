@@ -116,7 +116,9 @@ public abstract class AbstractFragmentParallelPlanner implements IFragmentParall
       throw new IllegalArgumentException(
           String.format("regionReplicaSet is invalid: %s", regionReplicaSet));
     }
-    boolean selectRandomDataNode = ReadConsistencyLevel.WEAK == this.readConsistencyLevel;
+    boolean selectRandomDataNode =
+        ReadConsistencyLevel.WEAK == this.readConsistencyLevel
+            || ReadConsistencyLevel.FOLLOWER_HEAD == this.readConsistencyLevel;
 
     // When planning fragment onto specific DataNode, the DataNode whose endPoint is in
     // black list won't be considered because it may have connection issue now.
@@ -134,9 +136,25 @@ public abstract class AbstractFragmentParallelPlanner implements IFragmentParall
       LOGGER.info("available replicas: {}", availableDataNodes);
     }
     int targetIndex;
-    if (!selectRandomDataNode || queryContext.getSession() == null) {
+    if (ReadConsistencyLevel.FOLLOWER_HEAD == this.readConsistencyLevel) {
+      if (availableDataNodes.size() <= 1) {
+        // fall back to leader
+        targetIndex = 0;
+      } else {
+        if (queryContext.getSession() == null) {
+          // use first follower
+          targetIndex = 1;
+        } else {
+          int followers = availableDataNodes.size() - 1;
+          // use sessionId to balance the weight of followers
+          targetIndex = 1 + (int) (queryContext.getSession().getSessionId() % followers);
+        }
+      }
+    } else if (!selectRandomDataNode || queryContext.getSession() == null) {
+      // STRONG
       targetIndex = 0;
     } else {
+      // WEAK
       targetIndex = (int) (queryContext.getSession().getSessionId() % availableDataNodes.size());
     }
     return availableDataNodes.get(targetIndex);
