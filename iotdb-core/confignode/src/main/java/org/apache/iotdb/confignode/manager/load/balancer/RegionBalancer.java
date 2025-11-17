@@ -30,6 +30,7 @@ import org.apache.iotdb.confignode.exception.DatabaseNotExistsException;
 import org.apache.iotdb.confignode.exception.NotEnoughDataNodeException;
 import org.apache.iotdb.confignode.manager.IManager;
 import org.apache.iotdb.confignode.manager.load.LoadManager;
+import org.apache.iotdb.confignode.manager.load.balancer.region.AntiGreedyRegionGroupAllocator;
 import org.apache.iotdb.confignode.manager.load.balancer.region.GreedyCopySetRegionGroupAllocator;
 import org.apache.iotdb.confignode.manager.load.balancer.region.GreedyRegionGroupAllocator;
 import org.apache.iotdb.confignode.manager.load.balancer.region.IRegionGroupAllocator;
@@ -60,6 +61,9 @@ public class RegionBalancer {
         break;
       case PGR:
         this.regionGroupAllocator = new PartiteGraphPlacementRegionGroupAllocator();
+        break;
+      case ANTI:
+        this.regionGroupAllocator = new AntiGreedyRegionGroupAllocator();
         break;
       case GCR:
       default:
@@ -160,6 +164,7 @@ public class RegionBalancer {
   public enum RegionGroupAllocatePolicy {
     GREEDY,
     GCR,
-    PGR
+    PGR,
+    ANTI,
   }
 }
