@@ -66,6 +66,7 @@ call ../sbin/start-cli.bat -h %host% -p %rpcPort% -u %user% -pw %pass% -e "creat
 call ../sbin/start-cli.bat -h %host% -p %rpcPort% -u %user% -pw %pass% -e "create function xcorr as 'org.apache.iotdb.library.dmatch.UDTFXCorr'"
 call ../sbin/start-cli.bat -h %host% -p %rpcPort% -u %user% -pw %pass% -e "create function dtw as 'org.apache.iotdb.library.dmatch.UDAFDtw'"
 call ../bin/start-cli.bat -h %host% -p %rpcPort% -u %user% -pw %pass% -e "create function ptnsym as 'org.apache.iotdb.library.dmatch.UDTFPtnSym'"
+call ../sbin/start-cli.bat -h %host% -p %rpcPort% -u %user% -pw %pass% -e "create function locomotif as 'org.apache.iotdb.library.dmatch.UDTFLoCoMotif'"
 call ../sbin/start-cli.bat -h %host% -p %rpcPort% -u %user% -pw %pass% -e "create function pearson as 'org.apache.iotdb.library.dmatch.UDAFPearson'"
 
 

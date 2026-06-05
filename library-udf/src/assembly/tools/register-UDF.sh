@@ -67,6 +67,7 @@ pass=root
 ../sbin/start-cli.sh -h $host -p $rpcPort -u $user -pw $pass -e "create function xcorr as 'org.apache.iotdb.library.dmatch.UDTFXCorr'"
 ../sbin/start-cli.sh -h $host -p $rpcPort -u $user -pw $pass -e "create function dtw as 'org.apache.iotdb.library.dmatch.UDAFDtw'"
 ../sbin/start-cli.sh -h $host -p $rpcPort -u $user -pw $pass -e "create function ptnsym as 'org.apache.iotdb.library.dmatch.UDTFPtnSym'"
+../sbin/start-cli.sh -h $host -p $rpcPort -u $user -pw $pass -e "create function locomotif as 'org.apache.iotdb.library.dmatch.UDTFLoCoMotif'"
 ../sbin/start-cli.sh -h $host -p $rpcPort -u $user -pw $pass -e "create function pearson as 'org.apache.iotdb.library.dmatch.UDAFPearson'"
 
 
