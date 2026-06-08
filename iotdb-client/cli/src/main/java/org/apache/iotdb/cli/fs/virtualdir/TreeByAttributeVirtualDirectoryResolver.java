@@ -17,20 +17,25 @@
  * under the License.
  */
 
-package org.apache.iotdb.cli.fs.node;
+package org.apache.iotdb.cli.fs.virtualdir;
 
-public enum FsNodeType {
-  VIRTUAL_ROOT,
-  VIRTUAL_DIRECTORY,
-  TREE_ROOT,
-  TREE_DATABASE,
-  TREE_INTERNAL_PATH,
-  TREE_DEVICE,
-  TREE_TIMESERIES,
-  TABLE_DATABASE,
-  TABLE_VIEW,
-  TABLE_DATA_FILE,
-  TABLE_SCHEMA_FILE,
-  TABLE_META_FILE,
-  UNKNOWN
+import org.apache.iotdb.cli.fs.provider.FilesystemSchemaProvider;
+import org.apache.iotdb.cli.fs.sql.SqlExecutor;
+
+public class TreeByAttributeVirtualDirectoryResolver
+    extends TreeByMetadataVirtualDirectoryResolver {
+
+  static final String NAME = "by-attribute";
+
+  public TreeByAttributeVirtualDirectoryResolver(
+      SqlExecutor executor, FilesystemSchemaProvider delegate) {
+    super(
+        NAME,
+        "Attributes",
+        "Browse tree timeseries grouped by attribute key and value",
+        "attribute-key",
+        "attribute-value",
+        executor,
+        delegate);
+  }
 }

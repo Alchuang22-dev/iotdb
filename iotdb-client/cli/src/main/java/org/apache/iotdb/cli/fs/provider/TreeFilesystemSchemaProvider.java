@@ -28,8 +28,10 @@ import org.apache.iotdb.cli.fs.sql.SqlRow;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class TreeFilesystemSchemaProvider implements FilesystemSchemaProvider {
@@ -50,7 +52,7 @@ public class TreeFilesystemSchemaProvider implements FilesystemSchemaProvider {
     if (ROOT.equals(path.toString().substring(1))) {
       return listDatabases();
     }
-    return listChildPaths(path);
+    return listChildPathsAndTimeseries(path);
   }
 
   @Override
@@ -64,31 +66,44 @@ public class TreeFilesystemSchemaProvider implements FilesystemSchemaProvider {
     if (isDatabase(path)) {
       return new FsNode(path.getFileName(), path, FsNodeType.TREE_DATABASE);
     }
-    List<SqlRow> rows = executor.query("SHOW TIMESERIES " + toTreePath(path));
-    if (rows.isEmpty()) {
-      return new FsNode(path.getFileName(), path, FsNodeType.UNKNOWN);
+    String treePath = TreeFilesystemSql.toTreePath(path);
+    SqlRow timeseries = findExactTimeseries(treePath);
+    if (timeseries != null) {
+      return new FsNode(path.getFileName(), path, FsNodeType.TREE_TIMESERIES, timeseries.asMap());
     }
-    return new FsNode(path.getFileName(), path, FsNodeType.TREE_TIMESERIES, rows.get(0).asMap());
+    SqlRow device = findExactDevice(treePath);
+    if (device != null) {
+      return new FsNode(path.getFileName(), path, FsNodeType.TREE_DEVICE, device.asMap());
+    }
+    if (hasChildPaths(treePath)) {
+      return new FsNode(path.getFileName(), path, FsNodeType.TREE_INTERNAL_PATH);
+    }
+    return new FsNode(path.getFileName(), path, FsNodeType.UNKNOWN);
   }
 
   @Override
   public List<SqlRow> read(FsPath path, int limit) throws SQLException {
     String measurement = path.getFileName();
-    FsPath devicePath = parent(path);
+    FsPath devicePath = TreeFilesystemSql.parent(path);
     return executor.query(
-        "SELECT " + measurement + " FROM " + toTreePath(devicePath) + " LIMIT " + limit);
+        "SELECT "
+            + measurement
+            + " FROM "
+            + TreeFilesystemSql.toTreePath(devicePath)
+            + " LIMIT "
+            + limit);
   }
 
   @Override
   public List<SqlRow> tail(FsPath path, int limit) throws SQLException {
     String measurement = path.getFileName();
-    FsPath devicePath = parent(path);
+    FsPath devicePath = TreeFilesystemSql.parent(path);
     List<SqlRow> rows =
         executor.query(
             "SELECT "
                 + measurement
                 + " FROM "
-                + toTreePath(devicePath)
+                + TreeFilesystemSql.toTreePath(devicePath)
                 + " ORDER BY time DESC LIMIT "
                 + limit);
     Collections.reverse(rows);
@@ -98,9 +113,10 @@ public class TreeFilesystemSchemaProvider implements FilesystemSchemaProvider {
   @Override
   public long count(FsPath path) throws SQLException {
     String measurement = path.getFileName();
-    FsPath devicePath = parent(path);
+    FsPath devicePath = TreeFilesystemSql.parent(path);
     List<SqlRow> rows =
-        executor.query("SELECT COUNT(" + measurement + ") FROM " + toTreePath(devicePath));
+        executor.query(
+            "SELECT COUNT(" + measurement + ") FROM " + TreeFilesystemSql.toTreePath(devicePath));
     if (rows.isEmpty() || rows.get(0).asMap().isEmpty()) {
       return 0;
     }
@@ -109,9 +125,9 @@ public class TreeFilesystemSchemaProvider implements FilesystemSchemaProvider {
 
   private List<FsNode> listTreeRoots() throws SQLException {
     Set<String> roots = new LinkedHashSet<>();
-    for (SqlRow row : executor.query("SHOW DATABASES")) {
+    for (SqlRow row : query("SHOW DATABASES")) {
       String database = row.get("Database");
-      if (database != null && database.startsWith(ROOT)) {
+      if (database != null && (ROOT.equals(database) || database.startsWith(ROOT + "."))) {
         roots.add(ROOT);
       }
     }
@@ -124,7 +140,7 @@ public class TreeFilesystemSchemaProvider implements FilesystemSchemaProvider {
 
   private List<FsNode> listDatabases() throws SQLException {
     List<FsNode> nodes = new ArrayList<>();
-    for (SqlRow row : executor.query("SHOW DATABASES")) {
+    for (SqlRow row : query("SHOW DATABASES")) {
       String database = row.get("Database");
       if (database == null || !database.startsWith(ROOT + ".")) {
         continue;
@@ -138,17 +154,33 @@ public class TreeFilesystemSchemaProvider implements FilesystemSchemaProvider {
     return nodes;
   }
 
-  private List<FsNode> listChildPaths(FsPath path) throws SQLException {
-    List<FsNode> nodes = new ArrayList<>();
-    for (SqlRow row : executor.query("SHOW CHILD PATHS " + toTreePath(path))) {
+  private List<FsNode> listChildPathsAndTimeseries(FsPath path) throws SQLException {
+    Map<String, FsNode> nodes = new LinkedHashMap<>();
+    String treePath = TreeFilesystemSql.toTreePath(path);
+    for (SqlRow row : query("SHOW CHILD PATHS " + treePath)) {
       String childPath = row.get("ChildPaths");
       if (childPath == null) {
         continue;
       }
-      FsPath fsPath = fromTreePath(childPath);
-      nodes.add(new FsNode(fsPath.getFileName(), fsPath, FsNodeType.TREE_INTERNAL_PATH));
+      FsPath fsPath = TreeFilesystemSql.fromTreePath(childPath);
+      nodes.put(
+          fsPath.toString(),
+          new FsNode(fsPath.getFileName(), fsPath, FsNodeType.TREE_INTERNAL_PATH, row.asMap()));
     }
-    return nodes;
+    for (SqlRow row : query("SHOW TIMESERIES " + treePath + ".*")) {
+      String timeseries = row.get("Timeseries");
+      if (timeseries == null) {
+        continue;
+      }
+      FsPath fsPath = TreeFilesystemSql.fromTreePath(timeseries);
+      if (!TreeFilesystemSql.parent(fsPath).equals(path)) {
+        continue;
+      }
+      nodes.put(
+          fsPath.toString(),
+          new FsNode(fsPath.getFileName(), fsPath, FsNodeType.TREE_TIMESERIES, row.asMap()));
+    }
+    return new ArrayList<>(nodes.values());
   }
 
   private boolean isTreeRoot(FsPath path) {
@@ -157,11 +189,11 @@ public class TreeFilesystemSchemaProvider implements FilesystemSchemaProvider {
   }
 
   private boolean isDatabase(FsPath path) throws SQLException {
-    if (path.getSegments().size() != 2 || !ROOT.equals(path.getSegments().get(0))) {
+    if (path.getSegments().size() < 2 || !ROOT.equals(path.getSegments().get(0))) {
       return false;
     }
-    String treePath = toTreePath(path);
-    for (SqlRow row : executor.query("SHOW DATABASES")) {
+    String treePath = TreeFilesystemSql.toTreePath(path);
+    for (SqlRow row : query("SHOW DATABASES")) {
       if (treePath.equals(row.get("Database"))) {
         return true;
       }
@@ -169,30 +201,37 @@ public class TreeFilesystemSchemaProvider implements FilesystemSchemaProvider {
     return false;
   }
 
-  private static String toTreePath(FsPath path) {
-    StringBuilder builder = new StringBuilder();
-    for (String segment : path.getSegments()) {
-      if (builder.length() > 0) {
-        builder.append('.');
+  private SqlRow findExactTimeseries(String treePath) throws SQLException {
+    for (SqlRow row : query("SHOW TIMESERIES " + treePath)) {
+      if (treePath.equals(row.get("Timeseries"))) {
+        return row;
       }
-      builder.append(segment);
     }
-    return builder.toString();
+    return null;
   }
 
-  private static FsPath fromTreePath(String treePath) {
-    return FsPath.absolute("/" + treePath.replace('.', '/'));
+  private SqlRow findExactDevice(String treePath) throws SQLException {
+    for (SqlRow row : query("SHOW DEVICES " + treePath)) {
+      String device = row.get("Device");
+      if (device == null) {
+        device = row.get("Devices");
+      }
+      if (treePath.equals(device)) {
+        return row;
+      }
+    }
+    return null;
   }
 
-  private static FsPath parent(FsPath path) {
-    List<String> segments = path.getSegments();
-    StringBuilder builder = new StringBuilder("/");
-    for (int i = 0; i < segments.size() - 1; i++) {
-      if (i > 0) {
-        builder.append('/');
-      }
-      builder.append(segments.get(i));
+  private boolean hasChildPaths(String treePath) throws SQLException {
+    return !query("SHOW CHILD PATHS " + treePath).isEmpty();
+  }
+
+  private List<SqlRow> query(String sql) throws SQLException {
+    List<SqlRow> rows = executor.query(sql);
+    if (rows == null) {
+      return new ArrayList<>();
     }
-    return FsPath.absolute(builder.toString());
+    return rows;
   }
 }
