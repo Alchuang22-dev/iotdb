@@ -96,6 +96,21 @@ public class TreeFilesystemSchemaProviderTest {
   }
 
   @Test
+  public void listInternalTreePathIncludesOneLevelTimeseriesLeaves() throws SQLException {
+    when(executor.query("SHOW CHILD PATHS root.sg")).thenReturn(SqlRow.list());
+    when(executor.query("SHOW TIMESERIES root.sg.*"))
+        .thenReturn(SqlRow.list(SqlRow.of("Timeseries", "root.sg.status", "DataType", "BOOLEAN")));
+
+    List<FsNode> children = provider.list(FsPath.absolute("/root/sg"));
+
+    assertEquals(1, children.size());
+    assertEquals("status", children.get(0).getName());
+    assertEquals("/root/sg/status", children.get(0).getPath().toString());
+    assertEquals(FsNodeType.TREE_TIMESERIES, children.get(0).getType());
+    assertEquals("BOOLEAN", children.get(0).getMetadata().get("DataType"));
+  }
+
+  @Test
   public void describeTimeseriesReturnsMetadataNode() throws SQLException {
     when(executor.query("SHOW TIMESERIES root.sg.d1.s1"))
         .thenReturn(
@@ -117,6 +132,36 @@ public class TreeFilesystemSchemaProviderTest {
     assertEquals(FsNodeType.TREE_TIMESERIES, node.getType());
     assertEquals("INT32", node.getMetadata().get("DataType"));
     verify(executor).query("SHOW TIMESERIES root.sg.d1.s1");
+  }
+
+  @Test
+  public void describeDeviceReturnsDirectoryNode() throws SQLException {
+    when(executor.query("SHOW DATABASES")).thenReturn(SqlRow.list());
+    when(executor.query("SHOW TIMESERIES root.sg.d1")).thenReturn(SqlRow.list());
+    when(executor.query("SHOW DEVICES root.sg.d1"))
+        .thenReturn(SqlRow.list(SqlRow.of("Device", "root.sg.d1", "IsAligned", "false")));
+
+    FsNode node = provider.describe(FsPath.absolute("/root/sg/d1"));
+
+    assertEquals("d1", node.getName());
+    assertEquals("/root/sg/d1", node.getPath().toString());
+    assertEquals(FsNodeType.TREE_DEVICE, node.getType());
+    assertEquals("false", node.getMetadata().get("IsAligned"));
+  }
+
+  @Test
+  public void describeInternalPathReturnsDirectoryNode() throws SQLException {
+    when(executor.query("SHOW DATABASES")).thenReturn(SqlRow.list());
+    when(executor.query("SHOW TIMESERIES root.sg.area1")).thenReturn(SqlRow.list());
+    when(executor.query("SHOW DEVICES root.sg.area1")).thenReturn(SqlRow.list());
+    when(executor.query("SHOW CHILD PATHS root.sg.area1"))
+        .thenReturn(SqlRow.list(SqlRow.of("ChildPaths", "root.sg.area1.d1")));
+
+    FsNode node = provider.describe(FsPath.absolute("/root/sg/area1"));
+
+    assertEquals("area1", node.getName());
+    assertEquals("/root/sg/area1", node.getPath().toString());
+    assertEquals(FsNodeType.TREE_INTERNAL_PATH, node.getType());
   }
 
   @Test

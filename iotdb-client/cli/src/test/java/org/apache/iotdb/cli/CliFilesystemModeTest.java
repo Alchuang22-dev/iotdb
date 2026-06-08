@@ -103,12 +103,14 @@ public class CliFilesystemModeTest {
     when(connection.getSqlDialect()).thenReturn("tree");
     mockSingleColumnQuery("SHOW DATABASES", "Database", "root.sg");
     mockSingleColumnQuery("SHOW CHILD PATHS root.sg", "ChildPaths", "root.sg.d1");
+    mockEmptyQuery("SHOW TIMESERIES root.sg.*");
 
     FilesystemShell shell = Cli.createFilesystemShell(ctx, connection);
     shell.execute("ls /root/sg");
 
     verify(statement).executeQuery("SHOW DATABASES");
     verify(statement).executeQuery("SHOW CHILD PATHS root.sg");
+    verify(statement).executeQuery("SHOW TIMESERIES root.sg.*");
   }
 
   @Test
@@ -134,5 +136,15 @@ public class CliFilesystemModeTest {
     when(metaData.getColumnLabel(1)).thenReturn(column);
     when(resultSet.next()).thenReturn(true, false);
     when(resultSet.getString(1)).thenReturn(value);
+  }
+
+  private void mockEmptyQuery(String sql) throws Exception {
+    ResultSet resultSet = mock(ResultSet.class);
+    ResultSetMetaData metaData = mock(ResultSetMetaData.class);
+    when(connection.createStatement()).thenReturn(statement);
+    when(statement.executeQuery(sql)).thenReturn(resultSet);
+    when(resultSet.getMetaData()).thenReturn(metaData);
+    when(metaData.getColumnCount()).thenReturn(0);
+    when(resultSet.next()).thenReturn(false);
   }
 }
