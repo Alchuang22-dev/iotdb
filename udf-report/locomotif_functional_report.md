@@ -37,8 +37,8 @@
 
 ## 实验图示
 
-- 蓝色曲线表示原始序列，红色曲线表示 LoCoMotif 返回的 motif member 区间。
-- 橙色半透明背景表示每个 motif 的 representative 区间。
+- 蓝色曲线表示原始序列，不同颜色曲线表示不同 `motifId` 的 member 区间。
+- 半透明背景表示对应颜色 motif 的 representative 区间。
 - 完整图示索引: `locomotif_functional_figures.md`
 
 ![LoCoMotif functional summary](figures/locomotif_functional_summary.png)

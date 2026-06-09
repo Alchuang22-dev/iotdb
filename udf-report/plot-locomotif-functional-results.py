@@ -47,6 +47,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
+MOTIF_COLORS = [
+    "#dc2626",
+    "#16a34a",
+    "#f59e0b",
+    "#7c3aed",
+    "#0891b2",
+    "#be123c",
+    "#4d7c0f",
+    "#c2410c",
+]
+
 
 @dataclass(frozen=True)
 class PlotCase:
@@ -219,6 +230,10 @@ def motif_intervals(motifs: list[dict]) -> list[tuple[int, int, int]]:
     return intervals
 
 
+def motif_color(motif_id: int) -> str:
+    return MOTIF_COLORS[motif_id % len(MOTIF_COLORS)]
+
+
 def plot_case(case: PlotCase, run_dir: Path, dataset_root: Path, figure_dir: Path) -> Path:
     x_values, y_values = case.series_loader(dataset_root)
     motifs = read_motif_results(run_dir, case.name)
@@ -227,7 +242,7 @@ def plot_case(case: PlotCase, run_dir: Path, dataset_root: Path, figure_dir: Pat
     fig, ax = plt.subplots(figsize=(16, 9), dpi=150)
     ax.plot(x_values, y_values, color="blue", linewidth=2.0, label="Normal Values")
 
-    for begin, end, _ in intervals:
+    for begin, end, motif_id in intervals:
         start_index = max(0, begin - 1)
         end_index = min(len(x_values), end)
         if start_index >= end_index:
@@ -235,17 +250,16 @@ def plot_case(case: PlotCase, run_dir: Path, dataset_root: Path, figure_dir: Pat
         ax.plot(
             x_values[start_index:end_index],
             y_values[start_index:end_index],
-            color="red",
+            color=motif_color(motif_id),
             linewidth=2.6,
         )
 
-    representatives = []
     for motif in motifs:
         representative = motif.get("representative")
         if representative:
-            representatives.append((int(representative["beginTime"]), int(representative["endTime"])))
-    for begin, end in representatives:
-        ax.axvspan(begin, end, color="#f59e0b", alpha=0.12, linewidth=0)
+            begin = int(representative["beginTime"])
+            end = int(representative["endTime"])
+            ax.axvspan(begin, end, color=motif_color(int(motif["motifId"])), alpha=0.12, linewidth=0)
 
     ax.set_title(case.title, fontsize=26, pad=12)
     ax.set_xlabel("Time", fontsize=20)
@@ -255,8 +269,17 @@ def plot_case(case: PlotCase, run_dir: Path, dataset_root: Path, figure_dir: Pat
 
     legend_handles = [
         Line2D([0], [0], color="blue", lw=3, label="Normal Values"),
-        Line2D([0], [0], color="red", lw=3, label="LoCoMotif Motifs"),
     ]
+    legend_handles.extend(
+        Line2D(
+            [0],
+            [0],
+            color=motif_color(int(motif["motifId"])),
+            lw=3,
+            label=f"Motif {motif['motifId']} (fitness={float(motif['fitness']):.3f}, n={len(motif.get('members', []))})",
+        )
+        for motif in motifs
+    )
     ax.legend(handles=legend_handles, loc="best", fontsize=18, frameon=True)
 
     if motifs:
@@ -333,8 +356,8 @@ def write_figure_report(run_dir: Path, figure_paths: list[Path], dataset_root: P
         file.write("# LoCoMotif UDF 功能实验图示\n\n")
         file.write(f"- 实验目录: `{run_dir}`\n")
         file.write(f"- 数据目录: `{dataset_root}`\n")
-        file.write("- 蓝色曲线表示原始序列，红色曲线表示 LoCoMotif 返回的 motif member 区间。\n")
-        file.write("- 橙色半透明背景表示每个 motif 的 representative 区间。\n\n")
+        file.write("- 蓝色曲线表示原始序列，不同颜色曲线表示不同 `motifId` 的 member 区间。\n")
+        file.write("- 半透明背景表示对应颜色 motif 的 representative 区间。\n\n")
         file.write("## 汇总\n\n")
         file.write(f"![LoCoMotif functional summary]({relative_paths[-1]})\n\n")
         file.write("## 分数据集结果\n\n")
@@ -358,8 +381,8 @@ def update_main_report(run_dir: Path, figure_paths: list[Path]) -> None:
         "",
         "## 实验图示",
         "",
-        "- 蓝色曲线表示原始序列，红色曲线表示 LoCoMotif 返回的 motif member 区间。",
-        "- 橙色半透明背景表示每个 motif 的 representative 区间。",
+        "- 蓝色曲线表示原始序列，不同颜色曲线表示不同 `motifId` 的 member 区间。",
+        "- 半透明背景表示对应颜色 motif 的 representative 区间。",
         "- 完整图示索引: `locomotif_functional_figures.md`",
         "",
         "![LoCoMotif functional summary](figures/locomotif_functional_summary.png)",
