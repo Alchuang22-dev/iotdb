@@ -4,7 +4,8 @@
 
 - Apache IoTDB: 2.0.7-SNAPSHOT 本地 all-bin/cli-bin
 - UDF: `org.apache.iotdb.library.dmatch.UDTFLoCoMotif`，注册名 `locomotif`
-- 输出目录: `/Users/alan671/Documents/iotdb-release/iotdb/udf-report/locomotif-functional/20260605152211`
+- 输出目录: `/Users/alan671/Documents/iotdb-release/iotdb/udf-report/locomotif-functional/20260610091255`
+- 查询参数: 真实数据集和尖峰样例均使用 `normalize_method=robust`，不启用自动 mask
 - 数据集:
   - TSMD Benchmark Real Collection: `mitdb1_0.csv`, `ppg_0.csv`, `refit_0.csv` slice
   - PAMAP2: `subject101_activity_sample.csv`，活动 ID 4/5/12/13 的 IMU 加速度子集
@@ -14,16 +15,18 @@
 
 | 实验 | 状态 | 返回 motif 行数 | Shell 耗时(s) | CLI 统计耗时 | 说明 |
 |---|---:|---:|---:|---:|---|
-| `synthetic_pair` | PASS | 1 | 0 | 0.067s | 合成数据；4 次重复长度 12 motif；双变量；关闭 warping |
-| `tsmd_mitdb1_ecg` | PASS | 2 | 3 | 2.034s | TSMD mitdb1_0；单变量 ECG；窗口 5000 |
-| `tsmd_ppg` | PASS | 2 | 3 | 1.902s | TSMD ppg_0；单变量 PPG；窗口 5000 |
-| `pamap2_multivariate` | PASS | 2 | 2 | 1.740s | PAMAP2 subject101；9 维 IMU 加速度；窗口 3000 |
-| `tsmd_refit_load` | PASS | 3 | 6 | 5.258s | TSMD REFIT refit_0 motif 区间；单变量负载；窗口 7000 |
-| `refit_house1_load` | PASS | 2 | 7 | 5.964s | REFIT House1 原始清洗数据前 5000 行；总功率和 3 个电器通道 |
+| `synthetic_pair` | PASS | 1 | 0 | 0.075s | 合成数据；4 次重复长度 12 motif；双变量；关闭 warping |
+| `synthetic_spike_robust` | PASS | 1 | 1 | 0.012s | 合成尖峰数据；仅使用 robust normalization，不做自动 mask |
+| `tsmd_mitdb1_ecg` | PASS | 2 | 2 | 1.658s | TSMD mitdb1_0；单变量 ECG；窗口 5000 |
+| `tsmd_ppg` | PASS | 2 | 2 | 1.633s | TSMD ppg_0；单变量 PPG；窗口 5000 |
+| `pamap2_multivariate` | PASS | 2 | 2 | 1.021s | PAMAP2 subject101；9 维 IMU 加速度；窗口 3000 |
+| `tsmd_refit_load` | PASS | 3 | 7 | 6.060s | TSMD REFIT refit_0 motif 区间；单变量负载；窗口 7000 |
+| `refit_house1_load` | PASS | 2 | 3 | 3.016s | REFIT House1 原始清洗数据前 5000 行；总功率和 3 个电器通道 |
 
 ## 结论
 
 - 合成重复片段用于验证基础 UDF 注册、窗口访问和 JSON 输出链路。
+- 合成尖峰片段用于验证 robust normalization 下的基础鲁棒性，不承担异常结构识别职责。
 - TSMD ECG/PPG 用于验证 LoCoMotif 在真实生理周期信号上发现重复 motif 的能力。
 - PAMAP2 使用 9 个 IMU 加速度通道，验证多变量输入路径。
 - REFIT 使用电力负载序列，验证长周期/稀疏重复模式场景。

@@ -42,6 +42,7 @@ public final class CandidateFinder {
     double bestFitness = 0.0d;
     Segment bestRepresentative = null;
     List<Segment> bestMembers = Collections.emptyList();
+    ActivePathCache pathCache = new ActivePathCache(paths, n);
 
     int lastBegin = n - lMin;
     for (int representativeBegin = 0; representativeBegin <= lastBegin; representativeBegin++) {
@@ -50,6 +51,8 @@ public final class CandidateFinder {
           || LoCoMotifUtils.hasMasked(colMask, representativeBegin, representativeBegin + lMin)) {
         continue;
       }
+      List<LocalPath> activePaths =
+          pathCache.moveTo(representativeBegin, representativeBegin + lMin);
       int maxEnd = Math.min(n, representativeBegin + lMax);
       for (int representativeEnd = representativeBegin + lMin;
           representativeEnd <= maxEnd;
@@ -61,7 +64,8 @@ public final class CandidateFinder {
           continue;
         }
         Candidate candidate =
-            evaluateCandidate(paths, n, representativeBegin, representativeEnd, overlap, rowMask);
+            evaluateCandidate(
+                activePaths, n, representativeBegin, representativeEnd, overlap, rowMask);
         if (candidate != null && candidate.fitness > bestFitness) {
           bestFitness = candidate.fitness;
           bestRepresentative = new Segment(representativeBegin, representativeEnd);
@@ -176,6 +180,52 @@ public final class CandidateFinder {
       this.segment = segment;
       this.score = score;
       this.pathLength = pathLength;
+    }
+  }
+
+  private static class ActivePathCache {
+
+    private final List<LocalPath>[] pathsByStart;
+    private final List<LocalPath> activePaths;
+    private int currentBegin;
+
+    @SuppressWarnings("unchecked")
+    private ActivePathCache(List<LocalPath> paths, int n) {
+      this.pathsByStart = (List<LocalPath>[]) new List[n];
+      this.activePaths = new ArrayList<>();
+      this.currentBegin = -1;
+      for (LocalPath path : paths) {
+        int start = Math.max(0, path.getJ1());
+        if (start >= n) {
+          continue;
+        }
+        if (pathsByStart[start] == null) {
+          pathsByStart[start] = new ArrayList<>();
+        }
+        pathsByStart[start].add(path);
+      }
+    }
+
+    private List<LocalPath> moveTo(int representativeBegin, int minimumEnd) {
+      while (currentBegin < representativeBegin) {
+        currentBegin++;
+        List<LocalPath> startingPaths = pathsByStart[currentBegin];
+        if (startingPaths != null) {
+          activePaths.addAll(startingPaths);
+        }
+      }
+      pruneExpired(minimumEnd);
+      return activePaths;
+    }
+
+    private void pruneExpired(int minimumEnd) {
+      for (int i = activePaths.size() - 1; i >= 0; i--) {
+        if (activePaths.get(i).getJl() < minimumEnd) {
+          int lastIndex = activePaths.size() - 1;
+          activePaths.set(i, activePaths.get(lastIndex));
+          activePaths.remove(lastIndex);
+        }
+      }
     }
   }
 }

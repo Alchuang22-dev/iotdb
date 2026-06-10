@@ -182,6 +182,7 @@ generate_setup_sql() {
     echo "create database root.locomotif_exp"
     echo "create timeseries root.locomotif_exp.synthetic.s1 with datatype=DOUBLE, encoding=PLAIN, compression=UNCOMPRESSED"
     echo "create timeseries root.locomotif_exp.synthetic.s2 with datatype=DOUBLE, encoding=PLAIN, compression=UNCOMPRESSED"
+    echo "create timeseries root.locomotif_exp.synthetic_spike.s1 with datatype=DOUBLE, encoding=PLAIN, compression=UNCOMPRESSED"
     echo "create timeseries root.locomotif_exp.tsmd_mitdb1.s1 with datatype=DOUBLE, encoding=PLAIN, compression=UNCOMPRESSED"
     echo "create timeseries root.locomotif_exp.tsmd_mitdb1.label with datatype=INT32, encoding=PLAIN, compression=UNCOMPRESSED"
     echo "create timeseries root.locomotif_exp.tsmd_ppg.s1 with datatype=DOUBLE, encoding=PLAIN, compression=UNCOMPRESSED"
@@ -210,6 +211,17 @@ generate_setup_sql() {
   for _ in $(seq 1 4); do
     for i in $(seq 0 11); do
       echo "INSERT INTO root.locomotif_exp.synthetic(timestamp,s1,s2) VALUES($t,${s1[$i]},${s2[$i]})" >>"$sql"
+      t=$((t + 1))
+    done
+  done
+  t=1
+  for repeat in $(seq 1 4); do
+    for i in $(seq 0 11); do
+      local value="${s1[$i]}"
+      if [[ "$repeat" == "2" && "$i" == "5" ]]; then
+        value=20
+      fi
+      echo "INSERT INTO root.locomotif_exp.synthetic_spike(timestamp,s1) VALUES($t,$value)" >>"$sql"
       t=$((t + 1))
     done
   done
@@ -268,6 +280,7 @@ generate_report() {
     echo "- Apache IoTDB: 2.0.7-SNAPSHOT 本地 all-bin/cli-bin"
     echo "- UDF: \`org.apache.iotdb.library.dmatch.UDTFLoCoMotif\`，注册名 \`locomotif\`"
     echo "- 输出目录: \`$RUN_DIR\`"
+    echo "- 查询参数: 真实数据集和尖峰样例均使用 \`normalize_method=robust\`，不启用自动 mask"
     echo "- 数据集:"
     echo "  - TSMD Benchmark Real Collection: \`mitdb1_0.csv\`, \`ppg_0.csv\`, \`refit_0.csv\` slice"
     echo "  - PAMAP2: \`subject101_activity_sample.csv\`，活动 ID 4/5/12/13 的 IMU 加速度子集"
@@ -282,6 +295,7 @@ generate_report() {
     echo "## 结论"
     echo
     echo "- 合成重复片段用于验证基础 UDF 注册、窗口访问和 JSON 输出链路。"
+    echo "- 合成尖峰片段用于验证 robust normalization 下的基础鲁棒性，不承担异常结构识别职责。"
     echo "- TSMD ECG/PPG 用于验证 LoCoMotif 在真实生理周期信号上发现重复 motif 的能力。"
     echo "- PAMAP2 使用 9 个 IMU 加速度通道，验证多变量输入路径。"
     echo "- REFIT 使用电力负载序列，验证长周期/稀疏重复模式场景。"
@@ -308,16 +322,18 @@ run_setup_sql
 printf 'name,status,motif_rows,shell_seconds,cli_cost,description\n' >"$SUMMARY_CSV"
 run_query synthetic_pair "合成数据；4 次重复长度 12 motif；双变量；关闭 warping" \
   'select locomotif(s1, s2, "l_min"="12", "l_max"="12", "rho"="0.6", "nb"="3", "window"="48", "step"="48", "warping"="false") from root.locomotif_exp.synthetic'
+run_query synthetic_spike_robust "合成尖峰数据；仅使用 robust normalization，不做自动 mask" \
+  'select locomotif(s1, "l_min"="12", "l_max"="12", "rho"="0.6", "nb"="1", "window"="48", "step"="48", "warping"="false", "normalize_method"="robust") from root.locomotif_exp.synthetic_spike'
 run_query tsmd_mitdb1_ecg "TSMD mitdb1_0；单变量 ECG；窗口 5000" \
-  'select locomotif(s1, "l_min"="216", "l_max"="450", "rho"="0.6", "nb"="2", "window"="5000", "step"="5000", "max_points"="6000", "warping"="true") from root.locomotif_exp.tsmd_mitdb1'
+  'select locomotif(s1, "l_min"="216", "l_max"="450", "rho"="0.6", "nb"="2", "window"="5000", "step"="5000", "max_points"="6000", "warping"="true", "normalize_method"="robust") from root.locomotif_exp.tsmd_mitdb1'
 run_query tsmd_ppg "TSMD ppg_0；单变量 PPG；窗口 5000" \
-  'select locomotif(s1, "l_min"="250", "l_max"="450", "rho"="0.6", "nb"="2", "window"="5000", "step"="5000", "max_points"="6000", "warping"="true") from root.locomotif_exp.tsmd_ppg'
+  'select locomotif(s1, "l_min"="250", "l_max"="450", "rho"="0.6", "nb"="2", "window"="5000", "step"="5000", "max_points"="6000", "warping"="true", "normalize_method"="robust") from root.locomotif_exp.tsmd_ppg'
 run_query pamap2_multivariate "PAMAP2 subject101；9 维 IMU 加速度；窗口 3000" \
-  'select locomotif(hand_acc_x, hand_acc_y, hand_acc_z, chest_acc_x, chest_acc_y, chest_acc_z, ankle_acc_x, ankle_acc_y, ankle_acc_z, "l_min"="80", "l_max"="240", "rho"="0.55", "nb"="2", "window"="3000", "step"="3000", "max_points"="3500", "warping"="true") from root.locomotif_exp.pamap2'
+  'select locomotif(hand_acc_x, hand_acc_y, hand_acc_z, chest_acc_x, chest_acc_y, chest_acc_z, ankle_acc_x, ankle_acc_y, ankle_acc_z, "l_min"="80", "l_max"="240", "rho"="0.55", "nb"="2", "window"="3000", "step"="3000", "max_points"="3500", "warping"="true", "normalize_method"="robust") from root.locomotif_exp.pamap2'
 run_query tsmd_refit_load "TSMD REFIT refit_0 motif 区间；单变量负载；窗口 7000" \
-  'select locomotif(s1, "l_min"="280", "l_max"="450", "rho"="0.25", "nb"="3", "window"="7000", "step"="7000", "max_points"="7500", "warping"="true") from root.locomotif_exp.tsmd_refit'
+  'select locomotif(s1, "l_min"="280", "l_max"="450", "rho"="0.25", "nb"="3", "window"="7000", "step"="7000", "max_points"="7500", "warping"="true", "normalize_method"="robust") from root.locomotif_exp.tsmd_refit'
 run_query refit_house1_load "REFIT House1 原始清洗数据前 5000 行；总功率和 3 个电器通道" \
-  'select locomotif(aggregate, app1, app2, app3, "l_min"="120", "l_max"="600", "rho"="0.3", "nb"="2", "window"="5000", "step"="5000", "max_points"="5500", "warping"="true") from root.locomotif_exp.refit_house1'
+  'select locomotif(aggregate, app1, app2, app3, "l_min"="120", "l_max"="600", "rho"="0.3", "nb"="2", "window"="5000", "step"="5000", "max_points"="5500", "warping"="true", "normalize_method"="robust") from root.locomotif_exp.refit_house1'
 
 generate_report
 echo "LoCoMotif functional experiment report: $REPORT_MD"

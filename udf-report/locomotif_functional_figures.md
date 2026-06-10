@@ -1,6 +1,6 @@
 # LoCoMotif UDF 功能实验图示
 
-- 实验目录: `/Users/alan671/Documents/iotdb-release/iotdb/udf-report/locomotif-functional/20260605152211`
+- 实验目录: `/Users/alan671/Documents/iotdb-release/iotdb/udf-report/locomotif-functional/20260610091255`
 - 数据目录: `/Users/alan671/Documents/iotdb-release/datasets/locomotif-udf/small`
 - 蓝色曲线表示原始序列，不同颜色曲线表示不同 `motifId` 的 member 区间。
 - 半透明背景表示对应颜色 motif 的 representative 区间。

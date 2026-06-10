@@ -20,12 +20,15 @@
 package org.apache.iotdb.library.dmatch.locomotif;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 
 /** LoCo local warping path discovery over a self-similarity matrix. */
 public class LoCo {
+
+  private static final int MATRIX_TILE_SIZE = 128;
 
   private final double[][] timeSeries;
   private final double[] gamma;
@@ -35,19 +38,22 @@ public class LoCo {
   private double deltaM;
   private float[][] similarityMatrix;
   private float[][] cumulativeSimilarityMatrix;
+  private float[] similarityValues;
+  private int similarityValueCount;
 
   private LoCo(double[][] timeSeries, boolean warping, boolean equalWeightDimensions) {
     this.timeSeries = timeSeries;
-    this.gamma = LoCoMotifUtils.estimateGamma(timeSeries, equalWeightDimensions);
     this.warping = warping;
+    this.gamma = LoCoMotifUtils.estimateGamma(timeSeries, equalWeightDimensions);
     this.deltaM = 0.5d;
   }
 
   public static LoCo instanceFromRho(
       double[][] timeSeries, double rho, boolean warping, boolean equalWeightDimensions) {
     LoCo loco = new LoCo(timeSeries, warping, equalWeightDimensions);
-    float[][] similarityMatrix = loco.calculateSimilarityMatrix();
-    loco.tau = loco.estimateTau(similarityMatrix, rho);
+    loco.calculateSimilarityMatrix();
+    loco.tau = loco.estimateTau(rho);
+    loco.similarityValues = null;
     loco.deltaA = 2.0d * loco.tau;
     return loco;
   }
@@ -89,20 +95,63 @@ public class LoCo {
     int n = timeSeries.length;
     int dimensions = timeSeries[0].length;
     similarityMatrix = new float[n][n];
-    for (int i = 0; i < n; i++) {
-      for (int j = 0; j < i; j++) {
-        similarityMatrix[i][j] = Float.NEGATIVE_INFINITY;
+    similarityValues = new float[n * (n + 1) / 2];
+    similarityValueCount = 0;
+
+    for (int rowBlock = 0; rowBlock < n; rowBlock += MATRIX_TILE_SIZE) {
+      int rowEnd = Math.min(n, rowBlock + MATRIX_TILE_SIZE);
+      for (int i = rowBlock; i < rowEnd; i++) {
+        Arrays.fill(similarityMatrix[i], 0, i, Float.NEGATIVE_INFINITY);
       }
-      for (int j = i; j < n; j++) {
-        double distance = 0.0d;
-        for (int dimension = 0; dimension < dimensions; dimension++) {
-          double diff = timeSeries[i][dimension] - timeSeries[j][dimension];
-          distance += gamma[dimension] * diff * diff;
+
+      for (int colBlock = rowBlock; colBlock < n; colBlock += MATRIX_TILE_SIZE) {
+        int colEnd = Math.min(n, colBlock + MATRIX_TILE_SIZE);
+        for (int i = rowBlock; i < rowEnd; i++) {
+          float[] similarityRow = similarityMatrix[i];
+          int colBegin = Math.max(i, colBlock);
+          if (dimensions == 1) {
+            calculateSingleDimensionSimilarityRow(i, colBegin, colEnd, similarityRow);
+          } else {
+            calculateMultiDimensionSimilarityRow(i, colBegin, colEnd, similarityRow, dimensions);
+          }
         }
-        similarityMatrix[i][j] = (float) Math.exp(-distance);
       }
     }
     return similarityMatrix;
+  }
+
+  private void calculateSingleDimensionSimilarityRow(
+      int i, int colBegin, int colEnd, float[] similarityRow) {
+    double value = timeSeries[i][0];
+    double weight = gamma[0];
+    for (int j = colBegin; j < colEnd; j++) {
+      double diff = value - timeSeries[j][0];
+      float similarity = (float) Math.exp(-weight * diff * diff);
+      similarityRow[j] = similarity;
+      collectSimilarityValue(similarity);
+    }
+  }
+
+  private void calculateMultiDimensionSimilarityRow(
+      int i, int colBegin, int colEnd, float[] similarityRow, int dimensions) {
+    double[] left = timeSeries[i];
+    for (int j = colBegin; j < colEnd; j++) {
+      double[] right = timeSeries[j];
+      double distance = 0.0d;
+      for (int dimension = 0; dimension < dimensions; dimension++) {
+        double diff = left[dimension] - right[dimension];
+        distance += gamma[dimension] * diff * diff;
+      }
+      float similarity = (float) Math.exp(-distance);
+      similarityRow[j] = similarity;
+      collectSimilarityValue(similarity);
+    }
+  }
+
+  private void collectSimilarityValue(float similarity) {
+    if (Float.isFinite(similarity)) {
+      similarityValues[similarityValueCount++] = similarity;
+    }
   }
 
   private void calculateCumulativeSimilarityMatrix() {
@@ -111,41 +160,47 @@ public class LoCo {
     }
     int n = similarityMatrix.length;
     cumulativeSimilarityMatrix = new float[n + 2][n + 2];
-    for (int i = 0; i < n; i++) {
-      for (int j = i; j < n; j++) {
-        float similarity = similarityMatrix[i][j];
-        double previous;
-        if (warping) {
-          previous =
-              max3(
-                  cumulativeSimilarityMatrix[i + 1][j + 1],
-                  cumulativeSimilarityMatrix[i][j + 1],
-                  cumulativeSimilarityMatrix[i + 1][j]);
-        } else {
-          previous = cumulativeSimilarityMatrix[i + 1][j + 1];
-        }
+    for (int rowBlock = 0; rowBlock < n; rowBlock += MATRIX_TILE_SIZE) {
+      int rowEnd = Math.min(n, rowBlock + MATRIX_TILE_SIZE);
+      for (int colBlock = rowBlock; colBlock < n; colBlock += MATRIX_TILE_SIZE) {
+        int colEnd = Math.min(n, colBlock + MATRIX_TILE_SIZE);
+        for (int i = rowBlock; i < rowEnd; i++) {
+          float[] similarityRow = similarityMatrix[i];
+          float[] cumulativeRow = cumulativeSimilarityMatrix[i + 2];
+          float[] previousRow = cumulativeSimilarityMatrix[i + 1];
+          float[] previousPreviousRow = cumulativeSimilarityMatrix[i];
+          int colBegin = Math.max(i, colBlock);
+          for (int j = colBegin; j < colEnd; j++) {
+            float similarity = similarityRow[j];
+            if (!Float.isFinite(similarity)) {
+              cumulativeRow[j + 2] = 0.0f;
+              continue;
+            }
+            double previous;
+            if (warping) {
+              previous = max3(previousRow[j + 1], previousPreviousRow[j + 1], previousRow[j]);
+            } else {
+              previous = previousRow[j + 1];
+            }
 
-        double value;
-        if (similarity < tau) {
-          value = Math.max(0.0d, deltaM * previous - deltaA);
-        } else {
-          value = Math.max(0.0d, similarity + previous);
+            double value;
+            if (similarity < tau) {
+              value = Math.max(0.0d, deltaM * previous - deltaA);
+            } else {
+              value = Math.max(0.0d, similarity + previous);
+            }
+            cumulativeRow[j + 2] = (float) value;
+          }
         }
-        cumulativeSimilarityMatrix[i + 2][j + 2] = (float) value;
       }
     }
   }
 
-  private double estimateTau(float[][] matrix, double rho) {
-    int n = matrix.length;
-    float[] values = new float[n * (n + 1) / 2];
-    int index = 0;
-    for (int i = 0; i < n; i++) {
-      for (int j = i; j < n; j++) {
-        values[index++] = matrix[i][j];
-      }
+  private double estimateTau(double rho) {
+    if (similarityValueCount == 0) {
+      return 0.0d;
     }
-    return LoCoMotifUtils.quantile(values, rho);
+    return LoCoMotifUtils.quantileInPlace(similarityValues, similarityValueCount, rho);
   }
 
   private List<int[][]> findBestPaths(

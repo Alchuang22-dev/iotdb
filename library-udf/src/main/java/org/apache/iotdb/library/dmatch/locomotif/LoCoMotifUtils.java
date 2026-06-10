@@ -42,6 +42,25 @@ public final class LoCoMotifUtils {
     return normalized;
   }
 
+  public static double[][] robustNormalize(double[][] values) {
+    double median = median(values);
+    double scale = 1.4826d * medianAbsoluteDeviation(values, median);
+    if (scale == 0.0d || Double.isNaN(scale)) {
+      scale = std(values, mean(values));
+    }
+
+    double[][] normalized = new double[values.length][values[0].length];
+    if (scale == 0.0d || Double.isNaN(scale)) {
+      return normalized;
+    }
+    for (int i = 0; i < values.length; i++) {
+      for (int j = 0; j < values[i].length; j++) {
+        normalized[i][j] = (values[i][j] - median) / scale;
+      }
+    }
+    return normalized;
+  }
+
   public static double[] estimateGamma(double[][] values, boolean equalWeightDimensions) {
     int dimensions = values[0].length;
     double[] gamma = new double[dimensions];
@@ -63,16 +82,23 @@ public final class LoCoMotifUtils {
     if (values.length == 0) {
       return 0.0d;
     }
-    float[] sorted = Arrays.copyOf(values, values.length);
-    Arrays.sort(sorted);
-    double position = rho * (sorted.length - 1);
+    return quantileInPlace(Arrays.copyOf(values, values.length), values.length, rho);
+  }
+
+  static double quantileInPlace(float[] values, int length, double rho) {
+    if (length == 0) {
+      return 0.0d;
+    }
+    double position = rho * (length - 1);
     int lower = (int) Math.floor(position);
     int upper = (int) Math.ceil(position);
+    float lowerValue = quickSelect(values, 0, length - 1, lower);
     if (lower == upper) {
-      return sorted[lower];
+      return lowerValue;
     }
+    float upperValue = quickSelect(values, 0, length - 1, upper);
     double weight = position - lower;
-    return sorted[lower] * (1.0d - weight) + sorted[upper] * weight;
+    return lowerValue * (1.0d - weight) + upperValue * weight;
   }
 
   public static Segment projectToVerticalAxis(int[][] path) {
@@ -145,42 +171,170 @@ public final class LoCoMotifUtils {
   private static double mean(double[][] values) {
     double sum = 0.0d;
     int count = 0;
-    for (double[] row : values) {
-      for (double value : row) {
+    for (double[] valueArray : values) {
+      for (double value : valueArray) {
+        if (!Double.isFinite(value)) {
+          continue;
+        }
         sum += value;
         count++;
       }
+    }
+    if (count == 0) {
+      return 0.0d;
     }
     return sum / count;
   }
 
   private static double mean(double[][] values, int dimension) {
     double sum = 0.0d;
-    for (double[] row : values) {
-      sum += row[dimension];
+    int count = 0;
+    for (int i = 0; i < values.length; i++) {
+      if (!Double.isFinite(values[i][dimension])) {
+        continue;
+      }
+      sum += values[i][dimension];
+      count++;
     }
-    return sum / values.length;
+    if (count == 0) {
+      return 0.0d;
+    }
+    return sum / count;
   }
 
   private static double std(double[][] values, double mean) {
     double sum = 0.0d;
     int count = 0;
-    for (double[] row : values) {
-      for (double value : row) {
+    for (double[] valueArray : values) {
+      for (double value : valueArray) {
+        if (!Double.isFinite(value)) {
+          continue;
+        }
         double diff = value - mean;
         sum += diff * diff;
         count++;
       }
+    }
+    if (count == 0) {
+      return 0.0d;
     }
     return Math.sqrt(sum / count);
   }
 
   private static double std(double[][] values, int dimension, double mean) {
     double sum = 0.0d;
-    for (double[] row : values) {
-      double diff = row[dimension] - mean;
+    int count = 0;
+    for (int i = 0; i < values.length; i++) {
+      if (!Double.isFinite(values[i][dimension])) {
+        continue;
+      }
+      double diff = values[i][dimension] - mean;
       sum += diff * diff;
+      count++;
     }
-    return Math.sqrt(sum / values.length);
+    if (count == 0) {
+      return 0.0d;
+    }
+    return Math.sqrt(sum / count);
+  }
+
+  private static double median(double[][] values) {
+    double[] buffer = new double[values.length * values[0].length];
+    int count = 0;
+    for (double[] valueArray : values) {
+      for (double value : valueArray) {
+        if (Double.isFinite(value)) {
+          buffer[count++] = value;
+        }
+      }
+    }
+    return median(buffer, count);
+  }
+
+  private static double medianAbsoluteDeviation(double[][] values, double median) {
+    double[] buffer = new double[values.length * values[0].length];
+    int count = 0;
+    for (double[] valueArray : values) {
+      for (double value : valueArray) {
+        if (Double.isFinite(value)) {
+          buffer[count++] = Math.abs(value - median);
+        }
+      }
+    }
+    return median(buffer, count);
+  }
+
+  private static double median(double[] buffer, int count) {
+    if (count == 0) {
+      return 0.0d;
+    }
+    double[] copy = Arrays.copyOf(buffer, count);
+    Arrays.sort(copy);
+    int middle = count / 2;
+    if (count % 2 == 1) {
+      return copy[middle];
+    }
+    return (copy[middle - 1] + copy[middle]) / 2.0d;
+  }
+
+  private static float quickSelect(float[] values, int left, int right, int k) {
+    while (left < right) {
+      int pivotIndex = medianOfThree(values, left, (left + right) >>> 1, right);
+      int[] equalRange = partition(values, left, right, pivotIndex);
+      if (k < equalRange[0]) {
+        right = equalRange[0] - 1;
+      } else if (k > equalRange[1]) {
+        left = equalRange[1] + 1;
+      } else {
+        return values[k];
+      }
+    }
+    return values[left];
+  }
+
+  private static int medianOfThree(float[] values, int left, int middle, int right) {
+    float a = values[left];
+    float b = values[middle];
+    float c = values[right];
+    if (Float.compare(a, b) <= 0) {
+      if (Float.compare(b, c) <= 0) {
+        return middle;
+      }
+      return Float.compare(a, c) <= 0 ? right : left;
+    }
+    if (Float.compare(a, c) <= 0) {
+      return left;
+    }
+    return Float.compare(b, c) <= 0 ? right : middle;
+  }
+
+  private static int[] partition(float[] values, int left, int right, int pivotIndex) {
+    float pivot = values[pivotIndex];
+    int lower = left;
+    int current = left;
+    int upper = right;
+    while (current <= upper) {
+      int compare = Float.compare(values[current], pivot);
+      if (compare < 0) {
+        swap(values, lower, current);
+        lower++;
+        current++;
+      } else if (compare > 0) {
+        swap(values, current, upper);
+        upper--;
+      } else {
+        current++;
+      }
+    }
+    return new int[] {lower, upper};
+  }
+
+  private static void swap(float[] values, int left, int right) {
+    if (left == right) {
+      return;
+    }
+    float value = values[left];
+    values[left] = values[right];
+    values[right] = value;
   }
 }

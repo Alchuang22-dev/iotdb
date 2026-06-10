@@ -44,6 +44,7 @@ public class UDTFLoCoMotif implements UDTF {
 
   private static final String L_MIN = "l_min";
   private static final String L_MAX = "l_max";
+  private static final String NORMALIZE_METHOD = "normalize_method";
   private static final int DEFAULT_WINDOW = 5000;
   private static final int DEFAULT_NB = 10;
   private static final int DEFAULT_MAX_POINTS = 10000;
@@ -55,6 +56,7 @@ public class UDTFLoCoMotif implements UDTF {
   private double overlap;
   private boolean warping;
   private boolean normalize;
+  private String normalizeMethod;
   private boolean equalWeightDimensions;
   private int window;
   private int step;
@@ -119,7 +121,27 @@ public class UDTFLoCoMotif implements UDTF {
         .validate(
             value -> "json".equalsIgnoreCase((String) value),
             "Only json output is supported now.",
-            parameters.getStringOrDefault("output", "json"));
+            parameters.getStringOrDefault("output", "json"))
+        .validate(
+            value -> isValidNormalizeMethod((String) value),
+            "normalize_method has to be one of: zscore, robust.",
+            parameters.getStringOrDefault(NORMALIZE_METHOD, "zscore"))
+        .validate(
+            value -> !(boolean) value,
+            "mask_mode has been removed from LoCoMotif; use normalize_method=robust for robust scaling.",
+            parameters.hasAttribute("mask_mode"))
+        .validate(
+            value -> !(boolean) value,
+            "mask_threshold has been removed from LoCoMotif.",
+            parameters.hasAttribute("mask_threshold"))
+        .validate(
+            value -> !(boolean) value,
+            "mask_radius has been removed from LoCoMotif.",
+            parameters.hasAttribute("mask_radius"))
+        .validate(
+            value -> !(boolean) value,
+            "mask_window has been removed from LoCoMotif.",
+            parameters.hasAttribute("mask_window"));
   }
 
   @Override
@@ -132,6 +154,7 @@ public class UDTFLoCoMotif implements UDTF {
     nb = parameters.getIntOrDefault("nb", DEFAULT_NB);
     overlap = parameters.getDoubleOrDefault("overlap", 0.0d);
     normalize = parameters.getBooleanOrDefault("normalize", true);
+    normalizeMethod = parameters.getStringOrDefault(NORMALIZE_METHOD, "zscore").toLowerCase();
     equalWeightDimensions = parameters.getBooleanOrDefault("equal_weight_dims", false);
     window = parameters.getIntOrDefault("window", DEFAULT_WINDOW);
     step = parameters.getIntOrDefault("step", window);
@@ -166,7 +189,7 @@ public class UDTFLoCoMotif implements UDTF {
       System.arraycopy(rawValues[i], 0, values[i], 0, dimension);
     }
     if (normalize) {
-      values = LoCoMotifUtils.zNormalize(values);
+      values = normalize(values);
     }
 
     try {
@@ -208,6 +231,17 @@ public class UDTFLoCoMotif implements UDTF {
       validRows++;
     }
     return validRows;
+  }
+
+  private double[][] normalize(double[][] values) {
+    if ("robust".equals(normalizeMethod)) {
+      return LoCoMotifUtils.robustNormalize(values);
+    }
+    return LoCoMotifUtils.zNormalize(values);
+  }
+
+  private static boolean isValidNormalizeMethod(String value) {
+    return "zscore".equalsIgnoreCase(value) || "robust".equalsIgnoreCase(value);
   }
 
   private long nextOutputTime(long preferredTime) {
