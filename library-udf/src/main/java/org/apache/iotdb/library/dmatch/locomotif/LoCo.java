@@ -20,7 +20,6 @@
 package org.apache.iotdb.library.dmatch.locomotif;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -33,6 +32,10 @@ public class LoCo {
   private final double[][] timeSeries;
   private final double[] gamma;
   private final boolean warping;
+  private final int minLag;
+  private final int maxLag;
+  private final double similarityThreshold;
+  private final double similarityThresholdDistance;
   private double tau;
   private double deltaA;
   private double deltaM;
@@ -41,16 +44,41 @@ public class LoCo {
   private float[] similarityValues;
   private int similarityValueCount;
 
-  private LoCo(double[][] timeSeries, boolean warping, boolean equalWeightDimensions) {
+  private LoCo(
+      double[][] timeSeries,
+      boolean warping,
+      boolean equalWeightDimensions,
+      int minLag,
+      int maxLag,
+      double similarityThreshold) {
     this.timeSeries = timeSeries;
     this.warping = warping;
     this.gamma = LoCoMotifUtils.estimateGamma(timeSeries, equalWeightDimensions);
+    this.minLag = Math.max(0, minLag);
+    this.maxLag = maxLag < 0 ? Integer.MAX_VALUE : maxLag;
+    this.similarityThreshold = Math.max(0.0d, Math.min(1.0d, similarityThreshold));
+    this.similarityThresholdDistance =
+        this.similarityThreshold > 0.0d
+            ? -Math.log(this.similarityThreshold)
+            : Double.POSITIVE_INFINITY;
     this.deltaM = 0.5d;
   }
 
   public static LoCo instanceFromRho(
       double[][] timeSeries, double rho, boolean warping, boolean equalWeightDimensions) {
-    LoCo loco = new LoCo(timeSeries, warping, equalWeightDimensions);
+    return instanceFromRho(timeSeries, rho, warping, equalWeightDimensions, 0, -1, 0.0d);
+  }
+
+  public static LoCo instanceFromRho(
+      double[][] timeSeries,
+      double rho,
+      boolean warping,
+      boolean equalWeightDimensions,
+      int minLag,
+      int maxLag,
+      double similarityThreshold) {
+    LoCo loco =
+        new LoCo(timeSeries, warping, equalWeightDimensions, minLag, maxLag, similarityThreshold);
     loco.calculateSimilarityMatrix();
     loco.tau = loco.estimateTau(rho);
     loco.similarityValues = null;
@@ -71,16 +99,6 @@ public class LoCo {
     }
     int size = cumulativeSimilarityMatrix.length;
     boolean[][] mask = new boolean[size][size];
-    for (int i = 0; i < size; i++) {
-      for (int j = 0; j < size; j++) {
-        mask[i][j] = true;
-      }
-    }
-    for (int i = 0; i < size; i++) {
-      for (int j = i + vWidth + 1; j < size; j++) {
-        mask[i][j] = false;
-      }
-    }
 
     List<int[][]> paths = findBestPaths(cumulativeSimilarityMatrix, mask, lMin, vWidth, warping);
     List<int[][]> shiftedPaths = new ArrayList<>();
@@ -95,25 +113,22 @@ public class LoCo {
     int n = timeSeries.length;
     int dimensions = timeSeries[0].length;
     similarityMatrix = new float[n][n];
-    similarityValues = new float[n * (n + 1) / 2];
+    similarityValues = new float[Math.max(16, Math.min(n * 2, 4096))];
     similarityValueCount = 0;
 
-    for (int rowBlock = 0; rowBlock < n; rowBlock += MATRIX_TILE_SIZE) {
-      int rowEnd = Math.min(n, rowBlock + MATRIX_TILE_SIZE);
-      for (int i = rowBlock; i < rowEnd; i++) {
-        Arrays.fill(similarityMatrix[i], 0, i, Float.NEGATIVE_INFINITY);
-      }
+    for (int i = 0; i < n; i++) {
+      float[] similarityRow = similarityMatrix[i];
+      similarityRow[i] = 1.0f;
+      collectSimilarityValue(1.0f);
 
-      for (int colBlock = rowBlock; colBlock < n; colBlock += MATRIX_TILE_SIZE) {
-        int colEnd = Math.min(n, colBlock + MATRIX_TILE_SIZE);
-        for (int i = rowBlock; i < rowEnd; i++) {
-          float[] similarityRow = similarityMatrix[i];
-          int colBegin = Math.max(i, colBlock);
-          if (dimensions == 1) {
-            calculateSingleDimensionSimilarityRow(i, colBegin, colEnd, similarityRow);
-          } else {
-            calculateMultiDimensionSimilarityRow(i, colBegin, colEnd, similarityRow, dimensions);
-          }
+      int rowBegin = offDiagonalColumnBegin(i, n);
+      int rowEnd = offDiagonalColumnEnd(i, n);
+      for (int colBlock = rowBegin; colBlock < rowEnd; colBlock += MATRIX_TILE_SIZE) {
+        int colEnd = Math.min(rowEnd, colBlock + MATRIX_TILE_SIZE);
+        if (dimensions == 1) {
+          calculateSingleDimensionSimilarityRow(i, colBlock, colEnd, similarityRow);
+        } else {
+          calculateMultiDimensionSimilarityRow(i, colBlock, colEnd, similarityRow, dimensions);
         }
       }
     }
@@ -126,9 +141,8 @@ public class LoCo {
     double weight = gamma[0];
     for (int j = colBegin; j < colEnd; j++) {
       double diff = value - timeSeries[j][0];
-      float similarity = (float) Math.exp(-weight * diff * diff);
-      similarityRow[j] = similarity;
-      collectSimilarityValue(similarity);
+      double distance = weight * diff * diff;
+      collectSimilarity(j, distance, similarityRow);
     }
   }
 
@@ -141,15 +155,35 @@ public class LoCo {
       for (int dimension = 0; dimension < dimensions; dimension++) {
         double diff = left[dimension] - right[dimension];
         distance += gamma[dimension] * diff * diff;
+        if (distance > similarityThresholdDistance) {
+          break;
+        }
       }
-      float similarity = (float) Math.exp(-distance);
-      similarityRow[j] = similarity;
-      collectSimilarityValue(similarity);
+      collectSimilarity(j, distance, similarityRow);
     }
+  }
+
+  private void collectSimilarity(int j, double distance, float[] similarityRow) {
+    if (distance > similarityThresholdDistance) {
+      similarityRow[j] = Float.NEGATIVE_INFINITY;
+      return;
+    }
+    float similarity = (float) Math.exp(-distance);
+    if (similarity < similarityThreshold) {
+      similarityRow[j] = Float.NEGATIVE_INFINITY;
+      return;
+    }
+    similarityRow[j] = similarity;
+    collectSimilarityValue(similarity);
   }
 
   private void collectSimilarityValue(float similarity) {
     if (Float.isFinite(similarity)) {
+      if (similarityValueCount == similarityValues.length) {
+        float[] expanded = new float[similarityValues.length * 2];
+        System.arraycopy(similarityValues, 0, expanded, 0, similarityValues.length);
+        similarityValues = expanded;
+      }
       similarityValues[similarityValueCount++] = similarity;
     }
   }
@@ -160,40 +194,41 @@ public class LoCo {
     }
     int n = similarityMatrix.length;
     cumulativeSimilarityMatrix = new float[n + 2][n + 2];
-    for (int rowBlock = 0; rowBlock < n; rowBlock += MATRIX_TILE_SIZE) {
-      int rowEnd = Math.min(n, rowBlock + MATRIX_TILE_SIZE);
-      for (int colBlock = rowBlock; colBlock < n; colBlock += MATRIX_TILE_SIZE) {
-        int colEnd = Math.min(n, colBlock + MATRIX_TILE_SIZE);
-        for (int i = rowBlock; i < rowEnd; i++) {
-          float[] similarityRow = similarityMatrix[i];
-          float[] cumulativeRow = cumulativeSimilarityMatrix[i + 2];
-          float[] previousRow = cumulativeSimilarityMatrix[i + 1];
-          float[] previousPreviousRow = cumulativeSimilarityMatrix[i];
-          int colBegin = Math.max(i, colBlock);
-          for (int j = colBegin; j < colEnd; j++) {
-            float similarity = similarityRow[j];
-            if (!Float.isFinite(similarity)) {
-              cumulativeRow[j + 2] = 0.0f;
-              continue;
-            }
-            double previous;
-            if (warping) {
-              previous = max3(previousRow[j + 1], previousPreviousRow[j + 1], previousRow[j]);
-            } else {
-              previous = previousRow[j + 1];
-            }
-
-            double value;
-            if (similarity < tau) {
-              value = Math.max(0.0d, deltaM * previous - deltaA);
-            } else {
-              value = Math.max(0.0d, similarity + previous);
-            }
-            cumulativeRow[j + 2] = (float) value;
-          }
+    for (int i = 0; i < n; i++) {
+      calculateCumulativeSimilarityCell(i, i);
+      int rowBegin = offDiagonalColumnBegin(i, n);
+      int rowEnd = offDiagonalColumnEnd(i, n);
+      for (int colBlock = rowBegin; colBlock < rowEnd; colBlock += MATRIX_TILE_SIZE) {
+        int colEnd = Math.min(rowEnd, colBlock + MATRIX_TILE_SIZE);
+        for (int j = colBlock; j < colEnd; j++) {
+          calculateCumulativeSimilarityCell(i, j);
         }
       }
     }
+  }
+
+  private void calculateCumulativeSimilarityCell(int i, int j) {
+    float similarity = similarityMatrix[i][j];
+    if (!Float.isFinite(similarity)) {
+      cumulativeSimilarityMatrix[i + 2][j + 2] = 0.0f;
+      return;
+    }
+    float[] previousRow = cumulativeSimilarityMatrix[i + 1];
+    float[] previousPreviousRow = cumulativeSimilarityMatrix[i];
+    double previous;
+    if (warping) {
+      previous = max3(previousRow[j + 1], previousPreviousRow[j + 1], previousRow[j]);
+    } else {
+      previous = previousRow[j + 1];
+    }
+
+    double value;
+    if (similarity < tau) {
+      value = Math.max(0.0d, deltaM * previous - deltaA);
+    } else {
+      value = Math.max(0.0d, similarity + previous);
+    }
+    cumulativeSimilarityMatrix[i + 2][j + 2] = (float) value;
   }
 
   private double estimateTau(double rho) {
@@ -206,12 +241,11 @@ public class LoCo {
   private List<int[][]> findBestPaths(
       float[][] matrix, boolean[][] mask, int lMin, int vWidth, boolean warping) {
     List<PathSeed> seeds = new ArrayList<>();
-    for (int i = 0; i < matrix.length; i++) {
-      for (int j = 0; j < matrix[i].length; j++) {
-        if (matrix[i][j] <= 0.0f) {
-          mask[i][j] = true;
-        }
-        if (!mask[i][j]) {
+    for (int i = 2; i < matrix.length; i++) {
+      int columnBegin = pathColumnBegin(i, matrix.length, vWidth);
+      int columnEnd = pathColumnEnd(i, matrix.length);
+      for (int j = columnBegin; j < columnEnd; j++) {
+        if (matrix[i][j] > 0.0f && !mask[i][j]) {
           seeds.add(new PathSeed(i, j, matrix[i][j]));
         }
       }
@@ -236,8 +270,8 @@ public class LoCo {
       }
       int[][] path =
           warping
-              ? bestPathWarping(matrix, mask, seed.i, seed.j)
-              : bestPathNoWarping(mask, seed.i, seed.j);
+              ? bestPathWarping(matrix, mask, seed.i, seed.j, vWidth)
+              : bestPathNoWarping(matrix, mask, seed.i, seed.j, vWidth);
       maskVicinity(path, mask, 0);
       if (path[path.length - 1][0] - path[0][0] + 1 >= lMin
           || path[path.length - 1][1] - path[0][1] + 1 >= lMin) {
@@ -248,7 +282,7 @@ public class LoCo {
     return paths;
   }
 
-  private int[][] bestPathWarping(float[][] matrix, boolean[][] mask, int i, int j) {
+  private int[][] bestPathWarping(float[][] matrix, boolean[][] mask, int i, int j, int vWidth) {
     List<int[]> reversePath = new ArrayList<>();
     while (i >= 2 && j >= 2) {
       reversePath.add(new int[] {i, j});
@@ -257,19 +291,19 @@ public class LoCo {
       float horizontal = matrix[i - 1][j - 2];
       float maximum = max3(diagonal, vertical, horizontal);
       if (diagonal == maximum) {
-        if (mask[i - 1][j - 1]) {
+        if (isUnavailablePathCell(matrix, mask, i - 1, j - 1, vWidth)) {
           break;
         }
         i--;
         j--;
       } else if (vertical == maximum) {
-        if (mask[i - 2][j - 1]) {
+        if (isUnavailablePathCell(matrix, mask, i - 2, j - 1, vWidth)) {
           break;
         }
         i -= 2;
         j--;
       } else {
-        if (mask[i - 1][j - 2]) {
+        if (isUnavailablePathCell(matrix, mask, i - 1, j - 2, vWidth)) {
           break;
         }
         i--;
@@ -279,17 +313,68 @@ public class LoCo {
     return reverse(reversePath);
   }
 
-  private int[][] bestPathNoWarping(boolean[][] mask, int i, int j) {
+  private int[][] bestPathNoWarping(float[][] matrix, boolean[][] mask, int i, int j, int vWidth) {
     List<int[]> reversePath = new ArrayList<>();
     while (i >= 2 && j >= 2) {
       reversePath.add(new int[] {i, j});
-      if (mask[i - 1][j - 1]) {
+      if (isUnavailablePathCell(matrix, mask, i - 1, j - 1, vWidth)) {
         break;
       }
       i--;
       j--;
     }
     return reverse(reversePath);
+  }
+
+  private int offDiagonalColumnBegin(int row, int size) {
+    int lag = Math.max(1, minLag);
+    if (row > Integer.MAX_VALUE - lag) {
+      return size;
+    }
+    return Math.min(size, row + lag);
+  }
+
+  private int offDiagonalColumnEnd(int row, int size) {
+    if (maxLag == Integer.MAX_VALUE) {
+      return size;
+    }
+    if (row > Integer.MAX_VALUE - maxLag - 1) {
+      return size;
+    }
+    return Math.min(size, row + maxLag + 1);
+  }
+
+  private int pathColumnBegin(int row, int size, int vWidth) {
+    int lag = Math.max(Math.max(1, minLag), vWidth + 1);
+    if (row > Integer.MAX_VALUE - lag) {
+      return size;
+    }
+    return Math.min(size, row + lag);
+  }
+
+  private int pathColumnEnd(int row, int size) {
+    if (maxLag == Integer.MAX_VALUE) {
+      return size;
+    }
+    if (row > Integer.MAX_VALUE - maxLag - 1) {
+      return size;
+    }
+    return Math.min(size, row + maxLag + 1);
+  }
+
+  private boolean isUnavailablePathCell(
+      float[][] matrix, boolean[][] mask, int row, int column, int vWidth) {
+    if (row < 2 || row >= matrix.length || column < 2 || column >= matrix[row].length) {
+      return true;
+    }
+    int lag = column - row;
+    if (lag < Math.max(Math.max(1, minLag), vWidth + 1)) {
+      return true;
+    }
+    if (maxLag != Integer.MAX_VALUE && lag > maxLag) {
+      return true;
+    }
+    return mask[row][column] || matrix[row][column] <= 0.0f;
   }
 
   private static void maskVicinity(int[][] path, boolean[][] mask, int vWidth) {

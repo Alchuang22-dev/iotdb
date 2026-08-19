@@ -322,6 +322,8 @@ run_setup_sql
 printf 'name,status,motif_rows,shell_seconds,cli_cost,description\n' >"$SUMMARY_CSV"
 run_query synthetic_pair "合成数据；4 次重复长度 12 motif；双变量；关闭 warping" \
   'select locomotif(s1, s2, "l_min"="12", "l_max"="12", "rho"="0.6", "nb"="3", "window"="48", "step"="48", "warping"="false") from root.locomotif_exp.synthetic'
+run_query synthetic_pair_lag_pruned "合成数据；启用 min_lag/max_lag 和 similarity_threshold 的保守剪枝路径" \
+  'select locomotif(s1, s2, "l_min"="12", "l_max"="12", "rho"="0.6", "nb"="3", "window"="48", "step"="48", "warping"="false", "min_lag"="12", "max_lag"="36", "similarity_threshold"="0.05") from root.locomotif_exp.synthetic'
 run_query synthetic_spike_robust "合成尖峰数据；仅使用 robust normalization，不做自动 mask" \
   'select locomotif(s1, "l_min"="12", "l_max"="12", "rho"="0.6", "nb"="1", "window"="48", "step"="48", "warping"="false", "normalize_method"="robust") from root.locomotif_exp.synthetic_spike'
 run_query tsmd_mitdb1_ecg "TSMD mitdb1_0；单变量 ECG；窗口 5000" \

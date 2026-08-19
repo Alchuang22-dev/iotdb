@@ -45,6 +45,9 @@ public class UDTFLoCoMotif implements UDTF {
   private static final String L_MIN = "l_min";
   private static final String L_MAX = "l_max";
   private static final String NORMALIZE_METHOD = "normalize_method";
+  private static final String MIN_LAG = "min_lag";
+  private static final String MAX_LAG = "max_lag";
+  private static final String SIMILARITY_THRESHOLD = "similarity_threshold";
   private static final int DEFAULT_WINDOW = 5000;
   private static final int DEFAULT_NB = 10;
   private static final int DEFAULT_MAX_POINTS = 10000;
@@ -58,6 +61,9 @@ public class UDTFLoCoMotif implements UDTF {
   private boolean normalize;
   private String normalizeMethod;
   private boolean equalWeightDimensions;
+  private int minLag;
+  private int maxLag;
+  private double similarityThreshold;
   private int window;
   private int step;
   private int maxPoints;
@@ -95,6 +101,23 @@ public class UDTFLoCoMotif implements UDTF {
             value -> (double) value >= 0.0d && (double) value <= 0.5d,
             "overlap has to be in the range [0, 0.5].",
             parameters.getDoubleOrDefault("overlap", 0.0d))
+        .validate(
+            value -> (int) value >= 0,
+            "min_lag has to be a non-negative integer.",
+            parameters.getIntOrDefault(MIN_LAG, 0))
+        .validate(
+            value -> (int) value >= -1,
+            "max_lag has to be -1 or a non-negative integer.",
+            parameters.getIntOrDefault(MAX_LAG, -1))
+        .validate(
+            args -> (int) args[1] < 0 || (int) args[1] >= (int) args[0],
+            "max_lag has to be greater than or equal to min_lag, or -1 for no upper bound.",
+            parameters.getIntOrDefault(MIN_LAG, 0),
+            parameters.getIntOrDefault(MAX_LAG, -1))
+        .validate(
+            value -> (double) value >= 0.0d && (double) value <= 1.0d,
+            "similarity_threshold has to be in the range [0, 1].",
+            parameters.getDoubleOrDefault(SIMILARITY_THRESHOLD, 0.0d))
         .validate(
             value -> (int) value > 0,
             "window has to be a positive integer.",
@@ -156,6 +179,9 @@ public class UDTFLoCoMotif implements UDTF {
     normalize = parameters.getBooleanOrDefault("normalize", true);
     normalizeMethod = parameters.getStringOrDefault(NORMALIZE_METHOD, "zscore").toLowerCase();
     equalWeightDimensions = parameters.getBooleanOrDefault("equal_weight_dims", false);
+    minLag = parameters.getIntOrDefault(MIN_LAG, 0);
+    maxLag = parameters.getIntOrDefault(MAX_LAG, -1);
+    similarityThreshold = parameters.getDoubleOrDefault(SIMILARITY_THRESHOLD, 0.0d);
     window = parameters.getIntOrDefault("window", DEFAULT_WINDOW);
     step = parameters.getIntOrDefault("step", window);
     maxPoints = parameters.getIntOrDefault("max_points", DEFAULT_MAX_POINTS);
@@ -194,7 +220,18 @@ public class UDTFLoCoMotif implements UDTF {
 
     try {
       LoCoMotif loCoMotif =
-          new LoCoMotif(values, lMin, lMax, rho, nb, overlap, warping, equalWeightDimensions);
+          new LoCoMotif(
+              values,
+              lMin,
+              lMax,
+              rho,
+              nb,
+              overlap,
+              warping,
+              equalWeightDimensions,
+              minLag,
+              maxLag,
+              similarityThreshold);
       List<MotifSet> motifSets = loCoMotif.findMotifSets();
       for (int i = 0; i < motifSets.size(); i++) {
         MotifSet motifSet = motifSets.get(i);

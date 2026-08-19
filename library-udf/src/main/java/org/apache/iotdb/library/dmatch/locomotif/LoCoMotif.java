@@ -34,6 +34,9 @@ public class LoCoMotif {
   private final double overlap;
   private final boolean warping;
   private final boolean equalWeightDimensions;
+  private final int minLag;
+  private final int maxLag;
+  private final double similarityThreshold;
 
   public LoCoMotif(
       double[][] timeSeries,
@@ -44,6 +47,32 @@ public class LoCoMotif {
       double overlap,
       boolean warping,
       boolean equalWeightDimensions) {
+    this(
+        timeSeries,
+        lMin,
+        lMax,
+        rho,
+        maxMotifSets,
+        overlap,
+        warping,
+        equalWeightDimensions,
+        0,
+        -1,
+        0.0d);
+  }
+
+  public LoCoMotif(
+      double[][] timeSeries,
+      int lMin,
+      int lMax,
+      double rho,
+      int maxMotifSets,
+      double overlap,
+      boolean warping,
+      boolean equalWeightDimensions,
+      int minLag,
+      int maxLag,
+      double similarityThreshold) {
     this.timeSeries = timeSeries;
     this.lMin = Math.max(4, lMin);
     this.lMax = lMax;
@@ -52,6 +81,9 @@ public class LoCoMotif {
     this.overlap = overlap;
     this.warping = warping;
     this.equalWeightDimensions = equalWeightDimensions;
+    this.minLag = Math.max(0, minLag);
+    this.maxLag = maxLag < 0 ? Integer.MAX_VALUE : maxLag;
+    this.similarityThreshold = Math.max(0.0d, Math.min(1.0d, similarityThreshold));
   }
 
   public List<MotifSet> findMotifSets() {
@@ -59,7 +91,15 @@ public class LoCoMotif {
     if (n < lMin || maxMotifSets <= 0 || lMax < lMin) {
       return new ArrayList<>();
     }
-    LoCo loCo = LoCo.instanceFromRho(timeSeries, rho, warping, equalWeightDimensions);
+    LoCo loCo =
+        LoCo.instanceFromRho(
+            timeSeries,
+            rho,
+            warping,
+            equalWeightDimensions,
+            minLag,
+            maxLag == Integer.MAX_VALUE ? -1 : maxLag,
+            similarityThreshold);
     List<LocalPath> paths =
         buildLocalPaths(
             loCo.findBestPaths(lMin, Math.max(10, lMin / 2)), loCo.getSimilarityMatrix());
